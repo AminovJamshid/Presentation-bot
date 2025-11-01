@@ -2,47 +2,48 @@
 
 namespace App\Models;
 
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
-use Illuminate\Notifications\Notifiable;
 
 class User extends Authenticatable
 {
-    /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory;
 
-    /**
-     * The attributes that are mass assignable.
-     *
-     * @var list<string>
-     */
+    protected $primaryKey = 'telegram_id';
+    public $incrementing = false;
+    protected $keyType = 'integer';
+
     protected $fillable = [
-        'name',
-        'email',
-        'password',
+        'telegram_id',
+        'username',
+        'first_name',
+        'last_name',
+        'language_code',
+        'is_blocked',
+        'last_active_at',
     ];
 
-    /**
-     * The attributes that should be hidden for serialization.
-     *
-     * @var list<string>
-     */
-    protected $hidden = [
-        'password',
-        'remember_token',
+    protected $casts = [
+        'last_active_at' => 'datetime',
+        'is_blocked' => 'boolean',
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
-    protected function casts(): array
+    // Relationships
+    public function presentations(): HasMany
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        return $this->hasMany(Presentation::class, 'user_telegram_id', 'telegram_id');
+    }
+
+    public function conversationState()
+    {
+        return $this->hasOne(ConversationState::class, 'user_telegram_id', 'telegram_id');
+    }
+
+    // Helper
+    public function updateLastActive(): void
+    {
+        $this->last_active_at = now();
+        $this->save();
     }
 }

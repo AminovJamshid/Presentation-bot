@@ -22,3 +22,18 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Telegram Bot specific
+/storage/app/telegram/*
+!/storage/app/telegram/.gitkeep
+/storage/app/presentations/*
+!/storage/app/presentations/.gitkeep
+
+# Test files (ixtiyoriy)
+/tests/output/*
+
+# Sensitive files (ixtiyoriy)
+api-keys.txt
+credentials.txt
+ngrok.yml
+```
