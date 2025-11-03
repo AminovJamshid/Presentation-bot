@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\ConversationState as ConversationStateModel;
 use App\Models\Presentation;
 use App\Enums\ConversationState;
+use App\Jobs\GeneratePresentationJob;
 use Illuminate\Support\Facades\Log;
 
 class ConversationService
@@ -37,7 +38,7 @@ class ConversationService
 
         // Birinchi savolni berish
         $message = "🎓 <b>Universitet/Institut nomini yozing:</b>\n\n";
-        $message .= "Masalan: TATU, TDTU, TIIAME...";
+        $message .= "Masalan: TATU, TDTU, TIIAME, Inha...";
 
         $this->botService->sendMessage($chatId, $message);
     }
@@ -64,7 +65,7 @@ class ConversationService
             $stateModel->clear();
             $this->botService->sendMessage(
                 $chatId,
-                "⏰ Vaqt tugadi. Qaytadan boshlang: /create"
+                "⏰ Vaqt tugadi (15 daqiqa).\n\nQaytadan boshlang: /create"
             );
             return;
         }
@@ -95,7 +96,10 @@ class ConversationService
                 break;
 
             default:
-                $this->botService->sendMessage($chatId, "Noma'lum holat. /create bilan qaytadan boshlang.");
+                $this->botService->sendMessage(
+                    $chatId,
+                    "Noma'lum holat. /create bilan qaytadan boshlang."
+                );
         }
     }
 
@@ -110,6 +114,9 @@ class ConversationService
             return;
         }
 
+        // Muddatni uzaytirish
+        $stateModel->extendExpiry();
+
         // Callback data ga qarab harakat qilish
         if (str_starts_with($data, 'placement_')) {
             $this->handlePlacementCallback($chatId, $data, $stateModel);
@@ -123,6 +130,15 @@ class ConversationService
      */
     protected function handleUniversity($chatId, $text, $stateModel)
     {
+        // Validatsiya
+        if (strlen($text) < 2) {
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ Universitet nomi juda qisqa.\n\nIltimos, to'liq nom kiriting:"
+            );
+            return;
+        }
+
         // Saqlash
         $stateModel->setData('university', $text);
         $stateModel->setState(ConversationState::AWAITING_DIRECTION);
@@ -139,6 +155,15 @@ class ConversationService
      */
     protected function handleDirection($chatId, $text, $stateModel)
     {
+        // Validatsiya
+        if (strlen($text) < 2) {
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ Yo'nalish nomi juda qisqa.\n\nIltimos, to'liq nom kiriting:"
+            );
+            return;
+        }
+
         $stateModel->setData('direction', $text);
         $stateModel->setState(ConversationState::AWAITING_GROUP);
 
@@ -153,6 +178,15 @@ class ConversationService
      */
     protected function handleGroup($chatId, $text, $stateModel)
     {
+        // Validatsiya
+        if (strlen($text) < 2) {
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ Guruh nomi juda qisqa.\n\nIltimos, to'g'ri kiriting:"
+            );
+            return;
+        }
+
         $stateModel->setData('group_name', $text);
         $stateModel->setState(ConversationState::AWAITING_PLACEMENT);
 
@@ -178,7 +212,10 @@ class ConversationService
         $stateModel->setData('info_placement', $placement);
         $stateModel->setState(ConversationState::AWAITING_TOPIC);
 
-        $message = "📝 <b>Prezentatsiya mavzusini yozing:</b>\n\n";
+        $placementText = $placement === 'first' ? 'Birinchi sahifa' : 'Oxirgi sahifa';
+
+        $message = "✅ Tanlandi: {$placementText}\n\n";
+        $message .= "📝 <b>Prezentatsiya mavzusini yozing:</b>\n\n";
         $message .= "Masalan: Python dasturlash tili, Sun'iy intellekt asoslari...";
 
         $this->botService->sendMessage($chatId, $message);
@@ -189,6 +226,23 @@ class ConversationService
      */
     protected function handleTopic($chatId, $text, $stateModel)
     {
+        // Validatsiya
+        if (strlen($text) < 5) {
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ Mavzu juda qisqa.\n\nKamida 5 ta belgi kiriting:"
+            );
+            return;
+        }
+
+        if (strlen($text) > 200) {
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ Mavzu juda uzun (maksimal 200 belgi).\n\nQisqaroq yozing:"
+            );
+            return;
+        }
+
         $stateModel->setData('topic', $text);
         $stateModel->setState(ConversationState::AWAITING_PAGES);
 
@@ -206,15 +260,16 @@ class ConversationService
      */
     protected function handlePages($chatId, $text, $stateModel)
     {
+        // Raqamga aylantirish
         $pages = (int)$text;
         $minPages = config('telegram.min_pages', 3);
         $maxPages = config('telegram.max_pages', 50);
 
         // Validatsiya
-        if ($pages < $minPages || $pages > $maxPages) {
+        if (!is_numeric($text) || $pages < $minPages || $pages > $maxPages) {
             $this->botService->sendMessage(
                 $chatId,
-                "❌ Noto'g'ri qiymat! {$minPages} dan {$maxPages} gacha raqam kiriting."
+                "❌ Noto'g'ri qiymat!\n\n{$minPages} dan {$maxPages} gacha raqam kiriting:"
             );
             return;
         }
@@ -256,7 +311,7 @@ class ConversationService
     }
 
     /**
-     * Prezentatsiya yaratish (hozircha placeholder)
+     * Prezentatsiya yaratish (YANGILANGAN - Job bilan)
      */
     protected function createPresentation($chatId, $userId, $data, $stateModel)
     {
@@ -277,26 +332,48 @@ class ConversationService
             // Suhbatni tozalash
             $stateModel->clear();
 
-            // Xabar yuborish
+            // Format nomi
+            $formatNames = [
+                'pptx' => 'PowerPoint',
+                'docx' => 'Word',
+                'pdf' => 'PDF'
+            ];
+            $formatName = $formatNames[$data['format']] ?? strtoupper($data['format']);
+
+            // Tasdiqlash xabari
             $message = "✅ <b>Ma'lumotlar qabul qilindi!</b>\n\n";
-            $message .= "📋 Qisqacha:\n";
+            $message .= "📋 <b>Qisqacha:</b>\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n";
             $message .= "🎓 Universitet: {$data['university']}\n";
             $message .= "📚 Yo'nalish: {$data['direction']}\n";
             $message .= "👥 Guruh: {$data['group_name']}\n";
             $message .= "📝 Mavzu: {$data['topic']}\n";
             $message .= "📊 Sahifalar: {$data['pages_count']}\n";
-            $message .= "📁 Format: " . strtoupper($data['format']) . "\n\n";
-            $message .= "⏳ Prezentatsiya tayyorlanmoqda...\n";
-            $message .= "⏱️ Bu biroz vaqt olishi mumkin.";
+            $message .= "📁 Format: {$formatName}\n";
+            $message .= "━━━━━━━━━━━━━━━━━━━━\n\n";
+            $message .= "⏳ <b>Prezentatsiya tayyorlanmoqda...</b>\n";
+            $message .= "⏱️ Bu 30-60 soniya vaqt olishi mumkin.\n\n";
+            $message .= "💡 Tayyor bo'lganda fayl yuboriladi!";
 
             $this->botService->sendMessage($chatId, $message);
 
-            // TODO: Keyingi bosqichda - haqiqiy prezentatsiya yaratish
-            // Hozircha faqat ma'lumotlarni saqladik
+            // Job ga yuborish (asynchronous - fonda ishlaydi)
+            GeneratePresentationJob::dispatch($presentation->id, $chatId);
+
+            Log::info('Presentation job dispatched', [
+                'presentation_id' => $presentation->id,
+                'user_id' => $userId,
+                'topic' => $data['topic']
+            ]);
 
         } catch (\Exception $e) {
             Log::error('Create presentation error: ' . $e->getMessage());
-            $this->botService->sendMessage($chatId, "❌ Xatolik yuz berdi. Qaytadan urinib ko'ring: /create");
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ <b>Xatolik yuz berdi!</b>\n\n" .
+                "Iltimos, qaytadan urinib ko'ring: /create\n\n" .
+                "Agar muammo davom etsa, @admin ga murojaat qiling."
+            );
         }
     }
 
@@ -309,8 +386,17 @@ class ConversationService
 
         if ($stateModel) {
             $stateModel->clear();
+            $this->botService->sendMessage(
+                $chatId,
+                "❌ <b>Jarayon bekor qilindi.</b>\n\n" .
+                "Yangi prezentatsiya yaratish uchun /create ni yuboring."
+            );
+        } else {
+            $this->botService->sendMessage(
+                $chatId,
+                "ℹ️ Hech qanday faol jarayon yo'q.\n\n" .
+                "Prezentatsiya yaratish uchun /create ni yuboring."
+            );
         }
-
-        $this->botService->sendMessage($chatId, "❌ Jarayon bekor qilindi.\n\nYangi prezentatsiya yaratish uchun /create ni yuboring.");
     }
 }

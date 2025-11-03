@@ -36,4 +36,12 @@ Thumbs.db
 api-keys.txt
 credentials.txt
 ngrok.yml
-```
+
+auth.json
+npm-debug.log
+yarn-error.log
+
+/storage/app/presentations/*.pptx
+/storage/app/presentations/*.docx
+/storage/app/presentations/*.pdf
+
